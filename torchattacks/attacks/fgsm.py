@@ -26,11 +26,12 @@ class FGSM(Attack):
 
     """
 
-    def __init__(self, model, eps=8 / 255):
+    def __init__(self, model, eps=8 / 255, one_hot=True):
         super().__init__("FGSM", model)
         self.eps = eps
         self.supported_mode = ["default", "targeted"]
-
+        self.one_hot = one_hot
+        
     def forward(self, images, labels):
         r"""
         Overridden.
@@ -39,13 +40,22 @@ class FGSM(Attack):
         images = images.clone().detach().to(self.device)
         labels = labels.clone().detach().to(self.device)
 
-        if self.targeted:
-            target_labels = self.get_target_label(images, labels)
-
-        loss = nn.CrossEntropyLoss()
-
         images.requires_grad = True
         outputs = self.get_logits(images)
+
+        if not self.one_hot:
+            loss = nn.CrossEntropyLoss()
+            if self.targeted:      
+                target_labels = self.get_target_label(images, labels)
+        else:
+            loss = nn.BCEWithLogitsLoss()
+            # Convert labels (class indices) to one-hot vectors
+            num_classes = outputs.shape[-1]
+            if not self.targeted:
+                labels = torch.nn.functional.one_hot(labels, num_classes=num_classes).float().to(self.device)
+            else:
+                target_labels = self.get_target_label(images, labels)
+                target_labels = torch.nn.functional.one_hot(target_labels, num_classes=num_classes).float().to(self.device)
 
         # Calculate loss
         if self.targeted:
@@ -59,6 +69,8 @@ class FGSM(Attack):
         )[0]
 
         adv_images = images + self.eps * grad.sign()
-        adv_images = torch.clamp(adv_images, min=0, max=1).detach()
+        # adv_images = torch.clamp(adv_images, min=0, max=1).detach()
+        # detach but no clamp
+        adv_images = adv_images.detach() 
 
         return adv_images
